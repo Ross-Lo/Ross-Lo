@@ -10,6 +10,18 @@ An unattended day-trading bot for [Alpaca](https://alpaca.markets) (commission-f
    are placed **on Alpaca's servers at the same moment**. They trigger even if the bot, your computer or
    your internet is down.
 3. 3:55 PM ET (earlier on half days): closes anything still open. Nothing is held overnight.
+4. Right after that, sends a **daily summary** and adds a row to `data/daily_summaries.csv`:
+   ```
+   Daily summary 2026-10-13 (PAPER)
+   Balance: $517.00 (+$17.00, +3.4%)
+   Trades: 2 | Wins: 1 | Losses: 1
+     TQQQ: +$20.00
+     NVDA: -$3.00
+   Tier: aggressive | Peak: $520.00 | Below peak: 0.6%
+   Next milestone $100,000: 0.5% there
+   House goal $600,000: 0.09% there
+   ```
+   Days with no trades still get a summary, so you know the bot is alive.
 
 **Protections that would have saved most of the $47K**
 
@@ -49,7 +61,8 @@ All numbers live in `config.yaml`. Change them there, not in the code.
 
 Create an automation with a **Webhook** trigger (ID `trading_bot`) and a notify action using
 `{{ trigger.json.message }}`. Then set `NOTIFY_WEBHOOK_URL=http://homeassistant.local:8123/api/webhook/trading_bot`
-in `.env`. You'll get a push for every trade, the end-of-day close, a daily-limit stop or a halt.
+in `.env`. You'll get a push for every trade, the daily summary, a daily-limit stop or a halt.
+Without a webhook, everything still goes to `data/bot.log`.
 
 ## If the kill switch fires
 

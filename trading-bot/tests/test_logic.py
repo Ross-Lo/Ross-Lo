@@ -135,3 +135,48 @@ def test_daily_loss_limit_blocks_new_entries(tmp_path):
     bot.tick()
     assert bot.state.stopped_for_day
     trading.submit_order.assert_not_called()
+
+
+# --- Daily summary ----------------------------------------------------------
+from report import DailySummary, Fill, SymbolResult, results_from_fills
+
+
+def test_results_from_fills():
+    fills = [Fill("TQQQ", "buy", 10, 30.0), Fill("TQQQ", "sell", 10, 32.0),
+             Fill("NVDA", "buy", 2, 100.0), Fill("NVDA", "sell", 2, 98.5),
+             Fill("AMD", "buy", 5, 150.0)]
+    assert results_from_fills(fills) == [
+        SymbolResult("TQQQ", 20.0, False), SymbolResult("NVDA", -3.0, False), SymbolResult("AMD", -750.0, True)]
+
+
+def test_summary_message():
+    summary = DailySummary("2026-10-13", "PAPER", 500, 517, 520, "aggressive", 100_000,
+                           [SymbolResult("TQQQ", 20.0, False), SymbolResult("NVDA", -3.0, False)])
+    msg = summary.message()
+    assert "Balance: $517.00 (+$17.00, +3.4%)" in msg
+    assert "Trades: 2 | Wins: 1 | Losses: 1" in msg
+    assert "TQQQ: +$20.00" in msg and "NVDA: -$3.00" in msg
+    assert "Next milestone $100,000: 0.5% there" in msg
+
+
+def test_bot_sends_one_summary_after_close(tmp_path):
+    bot, trading = make_bot(tmp_path, OPEN.replace(hour=15, minute=56), equity=520, last_equity=500)
+    trading.get_orders.side_effect = lambda req=None: [] if req is None else [
+        SimpleNamespace(symbol="TQQQ", side=SimpleNamespace(value="buy"), filled_qty="16", filled_avg_price="30.6"),
+        SimpleNamespace(symbol="TQQQ", side=SimpleNamespace(value="sell"), filled_qty="16", filled_avg_price="31.85"),
+    ]
+    sent = []
+    bot.notify = sent.append
+    bot.tick()
+    bot.tick()
+    assert len(sent) == 1
+    assert "TQQQ: +$20.00" in sent[0] and "+$20.00, +4.0%" in sent[0]
+    assert (tmp_path / "daily_summaries.csv").read_text().count("\n") == 2  # header + one day
+
+
+def test_summary_waits_until_positions_are_closed(tmp_path):
+    bot, trading = make_bot(tmp_path, OPEN.replace(hour=15, minute=56), positions=["TQQQ"])
+    sent = []
+    bot.notify = sent.append
+    bot.tick()
+    assert sent == ["End of day: closed all positions. Equity $500.00"]

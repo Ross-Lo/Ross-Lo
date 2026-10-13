@@ -22,9 +22,10 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest, StopLossRequest, TakeProfitRequest
+from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import GetOrdersRequest, MarketOrderRequest, StopLossRequest, TakeProfitRequest
 
+from report import DailySummary, Fill, append_csv, results_from_fills
 from risk import Tier, daily_loss_breached, drawdown_breached, position_size, select_tier
 from strategy import Bar, StrategyConfig, TradePlan, find_breakout
 
@@ -75,6 +76,7 @@ class State:
     start_of_day_equity: float = 0.0
     stopped_for_day: bool = False
     traded_today: list[str] = field(default_factory=list)
+    summary_day: str = ""
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -141,10 +143,7 @@ class Bot:
             s.tier = tier.name
         self.state.save(self.state_path)
 
-        if s.halted:
-            return self.cfg.poll_seconds
-
-        if drawdown_breached(equity, s.peak_equity, tier):
+        if not s.halted and drawdown_breached(equity, s.peak_equity, tier):
             s.halted = True
             s.halt_reason = (f"equity ${equity:,.2f} is {tier.max_drawdown_from_peak_pct}% below "
                              f"peak ${s.peak_equity:,.2f}")
@@ -157,6 +156,12 @@ class Bot:
             if self.trading.get_all_positions() or self.trading.get_orders():
                 self.trading.close_all_positions(cancel_orders=True)
                 self.notify(f"End of day: closed all positions. Equity ${equity:,.2f}")
+            elif s.summary_day != s.day:
+                # Sent on the first pass after everything is closed, so the closing fills are counted.
+                self.send_daily_summary(session_open, equity, tier)
+            return self.cfg.poll_seconds
+
+        if s.halted:
             return self.cfg.poll_seconds
 
         if not s.stopped_for_day and daily_loss_breached(equity, s.start_of_day_equity, tier):
@@ -208,6 +213,29 @@ class Bot:
             trades_left -= 1
             if open_slots <= 0 or trades_left <= 0:
                 return
+
+    def send_daily_summary(self, session_open: datetime, equity: float, tier: Tier) -> None:
+        s = self.state
+        orders = self.trading.get_orders(GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, after=session_open, limit=500, nested=False))
+        fills = [Fill(o.symbol, o.side.value, float(o.filled_qty), float(o.filled_avg_price))
+                 for o in orders if o.filled_avg_price and float(o.filled_qty or 0) > 0]
+        summary = DailySummary(
+            day=s.day,
+            mode="PAPER" if _paper() else "LIVE",
+            start_equity=s.start_of_day_equity,
+            end_equity=equity,
+            peak_equity=s.peak_equity,
+            tier=tier.name,
+            next_milestone=tier.up_to_peak_equity,
+            results=results_from_fills(fills),
+            halted=s.halted,
+            stopped_for_day=s.stopped_for_day,
+        )
+        self.notify(summary.message())
+        append_csv(self.state_path.parent / "daily_summaries.csv", summary)
+        s.summary_day = s.day
+        self.state.save(self.state_path)
 
     def fetch_bars(self, symbols: list[str], session_open: datetime, now: datetime) -> dict[str, list[Bar]]:
         req = StockBarsRequest(symbol_or_symbols=symbols, timeframe=TimeFrame.Minute,
