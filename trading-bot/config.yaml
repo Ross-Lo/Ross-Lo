@@ -1,0 +1,50 @@
+# Symbols to watch. Leveraged ETFs (TQQQ, SOXL) and high-volume stocks move the most intraday.
+watchlist: [TQQQ, SOXL, NVDA, TSLA, AMD, PLTR]
+
+strategy:
+  opening_range_minutes: 15   # range = high/low of 9:30-9:45 ET
+  reward_multiple: 2.0        # profit target = 2x the distance to the stop
+  stop_mode: range_low        # range_low (wider stop) or range_mid (tighter stop, bigger size)
+  min_range_pct: 0.3          # skip days where the range is too tight to be meaningful
+  max_range_pct: 5.0          # skip days where the range is too wide (stop would be huge)
+  max_chase_pct: 0.5          # don't buy if price is already this far past the breakout
+  allow_shorts: false         # shorting needs a margin account with $2,000+
+
+schedule:                     # US Eastern time
+  entry_cutoff: "11:30"       # no new trades after this
+  flatten_at: "15:55"         # close everything before the bell (earlier on half days)
+
+limits:
+  max_open_positions: 2
+  max_trades_per_day: 3
+  pdt_guard: true             # under $25k, stay within 3 day trades per 5 days. Set false if your broker no longer enforces it.
+  poll_seconds: 30
+
+# Risk tiers ratchet on PEAK equity: once you reach a level, you never drop back to a riskier tier.
+tiers:
+  - name: aggressive          # $500 -> $100k
+    up_to_peak_equity: 100000
+    risk_per_trade_pct: 10    # lose 10% of the account if the stop hits
+    max_position_pct: 100
+    daily_loss_limit_pct: 25
+    max_drawdown_from_peak_pct: 40   # e.g. peak $47k -> halts at $28.2k instead of $0
+    sizing_capital_cap: null
+
+  - name: steady              # $100k -> $600k, trades as if the account were $50k
+    up_to_peak_equity: 600000
+    risk_per_trade_pct: 2
+    max_position_pct: 50
+    daily_loss_limit_pct: 6
+    max_drawdown_from_peak_pct: 15
+    sizing_capital_cap: 50000
+
+  - name: preserve            # house goal reached
+    up_to_peak_equity: null
+    risk_per_trade_pct: 1
+    max_position_pct: 25
+    daily_loss_limit_pct: 3
+    max_drawdown_from_peak_pct: 10
+    sizing_capital_cap: 50000
+
+# Optional: POST {"message": "..."} here on every trade/halt. Works with a Home Assistant webhook automation.
+notify_webhook_url: ""
